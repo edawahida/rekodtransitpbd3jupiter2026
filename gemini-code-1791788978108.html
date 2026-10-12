@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Rekod Transit PBD</title>
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] }
+                }
+            }
+        }
+    </script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Custom Styles for Print and Glassmorphism -->
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .glass {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.05);
+        }
+        .glass-header {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.4);
+        }
+        
+        @media print {
+            body { background: white !important; }
+            .no-print { display: none !important; }
+            .glass { 
+                background: white !important; 
+                backdrop-filter: none !important;
+                border: none !important;
+                box-shadow: none !important;
+            }
+            .print-border-none { border: none !important; resize: none !important; }
+            .print-break-inside-avoid { break-inside: avoid; }
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-100 via-indigo-50 to-purple-200 min-h-screen text-gray-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Initial Data based on constraints and attached PDF
+        const initialTopics = [
+            { id: 't1', code: '1.0', name: 'Listening Skills' },
+            { id: 't2', code: '2.0', name: 'Speaking Skills' },
+            { id: 't3', code: '3.0', name: 'Reading Skills' },
+            { id: 't4', code: '4.0', name: 'Writing Skills' },
+            { id: 't5', code: '5.0', name: 'Literature in Action' }
+        ];
+
+        const initialStudents = [
+            { id: 's1', name: 'CHRIST PUTRA ELVINE A/L HANAFFIE', marks: { t1: 80, t2: 75, t3: 65, t4: 55, t5: 85 } },
+            { id: 's2', name: 'ALVIRA A/P SANWIN', marks: { t1: 45, t2: 38, t3: 50, t4: 40, t5: 60 } }
+        ];
+
+        const initialSettings = {
+            subject: 'Bahasa Inggeris',
+            form: 'Tingkatan 3',
+            logo: null
+        };
+
+        // Utility: Convert Mark to TP
+        const getTP = (mark) => {
+            if (mark === '' || mark === null || mark === undefined) return { tp: 0, label: '-', color: 'bg-gray-200 text-gray-700' };
+            const m = Number(mark);
+            if (m < 20) return { tp: 1, label: 'TP 1', color: 'bg-red-500 text-white' };
+            if (m < 40) return { tp: 2, label: 'TP 2', color: 'bg-orange-500 text-white' };
+            if (m < 60) return { tp: 3, label: 'TP 3', color: 'bg-yellow-400 text-gray-800' };
+            if (m < 75) return { tp: 4, label: 'TP 4', color: 'bg-blue-500 text-white' };
+            if (m < 90) return { tp: 5, label: 'TP 5', color: 'bg-purple-500 text-white' };
+            return { tp: 6, label: 'TP 6', color: 'bg-green-500 text-white' };
+        };
+
+        const App = () => {
+            // State Declarations
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [settings, setSettings] = useState(initialSettings);
+            const [topics, setTopics] = useState(initialTopics);
+            const [students, setStudents] = useState(initialStudents);
+            const [selectedStudentId, setSelectedStudentId] = useState('');
+
+            // Load from LocalStorage
+            useEffect(() => {
+                const savedData = localStorage.getItem('pbd_data');
+                if (savedData) {
+                    const parsed = JSON.parse(savedData);
+                    if (parsed.settings) setSettings(parsed.settings);
+                    if (parsed.topics) setTopics(parsed.topics);
+                    if (parsed.students) setStudents(parsed.students);
+                }
+            }, []);
+
+            // Save to LocalStorage
+            useEffect(() => {
+                const dataToSave = { settings, topics, students };
+                localStorage.setItem('pbd_data', JSON.stringify(dataToSave));
+            }, [settings, topics, students]);
+
+            // Analytics Data Calculations
+            const totalStudents = students.length;
+            let classTotalMarks = 0;
+            let markCount = 0;
+            let classTotalTP = 0;
+            let tpCount = 0;
+            const tpDistribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+            
+            const studentsWithAvg = students.map(s => {
+                let sMarks = 0, sCount = 0;
+                topics.forEach(t => {
+                    const m = s.marks[t.id];
+                    if (m !== undefined && m !== '') {
+                        sMarks += Number(m);
+                        sCount++;
+                        classTotalMarks += Number(m);
+                        markCount++;
+                        
+                        const tpObj = getTP(m);
+                        classTotalTP += tpObj.tp;
+                        tpCount++;
+                    }
+                });
+                const avgMark = sCount > 0 ? Math.round(sMarks / sCount) : 0;
+                const overallTP = getTP(avgMark).tp;
+                if (overallTP > 0) tpDistribution[overallTP]++;
+                return { ...s, avgMark, overallTP };
+            });
+
+            const avgClassMark = markCount > 0 ? (classTotalMarks / markCount).toFixed(1) : 0;
+            const avgClassTP = tpCount > 0 ? (classTotalTP / tpCount).toFixed(1) : 0;
+
+            const interventionStudents = studentsWithAvg.filter(s => s.overallTP > 0 && s.overallTP <= 2);
+            const excellentStudents = studentsWithAvg.filter(s => s.overallTP >= 5);
+
+            // Handlers
+            const handleBackup = () => {
+                const data = JSON.stringify({ settings, topics, students }, null, 2);
+                const blob = new Blob([data], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'backup_pbd.json';
+                a.click();
+            };
+
+            const handleRestore = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const parsed = JSON.parse(e.target.result);
+                        if (parsed.settings) setSettings(parsed.settings);
+                        if (parsed.topics) setTopics(parsed.topics);
+                        if (parsed.students) setStudents(parsed.students);
+                        alert("Data berjaya dipulihkan!");
+                    } catch (err) {
+                        alert("Format fail tidak sah.");
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            const handleLogoUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        setSettings({ ...settings, logo: ev.target.result });
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            // Components
+            const Dashboard = () => {
+                const chartRef = useRef(null);
+                const chartInstance = useRef(null);
+
+                useEffect(() => {
+                    if (chartRef.current) {
+                        if (chartInstance.current) chartInstance.current.destroy();
+                        const ctx = chartRef.current.getContext('2d');
+                        chartInstance.current = new Chart(ctx, {
+                            type: 'bar',
+                            data: {
+                                labels: ['TP 1', 'TP 2', 'TP 3', 'TP 4', 'TP 5', 'TP 6'],
+                                datasets: [{
+                                    label: 'Bilangan Pelajar',
+                                    data: [tpDistribution[1], tpDistribution[2], tpDistribution[3], tpDistribution[4], tpDistribution[5], tpDistribution[6]],
+                                    backgroundColor: ['#ef4444', '#f97316', '#facc15', '#3b82f6', '#a855f7', '#22c55e'],
+                                    borderRadius: 6
+                                }]
+                            },
+                            options: { responsive: true, plugins: { legend: { display: false } } }
+                        });
+                    }
+                    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+                }, [tpDistribution]);
+
+                return (
+                    <div className="space-y-6 animate-fade-in">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="glass p-6 rounded-2xl flex flex-col items-center justify-center text-center">
+                                <h3 className="text-gray-500 font-semibold mb-2">Jumlah Pelajar</h3>
+                                <p className="text-4xl font-bold text-blue-600">{totalStudents}</p>
+                            </div>
+                            <div className="glass p-6 rounded-2xl flex flex-col items-center justify-center text-center">
+                                <h3 className="text-gray-500 font-semibold mb-2">Purata Markah Kelas</h3>
+                                <p className="text-4xl font-bold text-purple-600">{avgClassMark}%</p>
+                            </div>
+                            <div className="glass p-6 rounded-2xl flex flex-col items-center justify-center text-center">
+                                <h3 className="text-gray-500 font-semibold mb-2">Purata TP Kelas</h3>
+                                <p className="text-4xl font-bold text-green-600">TP {avgClassTP}</p>
+                            </div>
+                        </div>
+
+                        <div className="glass p-6 rounded-2xl">
+                            <h3 className="text-lg font-bold mb-4">Taburan Tahap Penguasaan (Keseluruhan)</h3>
+                            <canvas ref={chartRef} className="max-h-64"></canvas>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="glass p-6 rounded-2xl">
+                                <h3 className="text-lg font-bold mb-4 text-red-600">Senarai Intervensi (TP1 - TP2)</h3>
+                                {interventionStudents.length === 0 ? <p className="text-gray-500">Tiada pelajar.</p> : (
+                                    <ul className="space-y-3">
+                                        {interventionStudents.map(s => (
+                                            <li key={s.id} className="flex flex-col bg-white/50 p-3 rounded-lg">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <span className="font-semibold">{s.name}</span>
+                                                    <span className={`px-2 py-1 text-xs font-bold rounded-md ${getTP(s.avgMark).color}`}>TP {s.overallTP}</span>
+                                                </div>
+                                                <span className="text-sm text-gray-600">Tindakan: Bimbingan rapi secara individu, latih tubi berfokus.</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                            <div className="glass p-6 rounded-2xl">
+                                <h3 className="text-lg font-bold mb-4 text-green-600">Senarai Cemerlang (TP5 - TP6)</h3>
+                                {excellentStudents.length === 0 ? <p className="text-gray-500">Tiada pelajar.</p> : (
+                                    <ul className="space-y-3">
+                                        {excellentStudents.map(s => (
+                                            <li key={s.id} className="flex flex-col bg-white/50 p-3 rounded-lg">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <span className="font-semibold">{s.name}</span>
+                                                    <span className={`px-2 py-1 text-xs font-bold rounded-md ${getTP(s.avgMark).color}`}>TP {s.overallTP}</span>
+                                                </div>
+                                                <span className="text-sm text-gray-600">Tindakan: Latihan pengayaan, mentor rakan sebaya.</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const TransitRecord = () => {
+                const handleMarkChange = (studentId, topicId, val) => {
+                    let mark = parseInt(val, 10);
+                    if (val === '') mark = '';
+                    else if (mark < 0) mark = 0;
+                    else if (mark > 100) mark = 100;
+
+                    const newStudents = students.map(s => {
+                        if (s.id === studentId) return { ...s, marks: { ...s.marks, [topicId]: mark } };
+                        return s;
+                    });
+                    setStudents(newStudents);
+                };
+
+                const addStudent = () => {
+                    const name = prompt("Sila masukkan nama pelajar:");
+                    if (name) {
+                        setStudents([...students, { id: 's' + Date.now(), name: name.toUpperCase(), marks: {} }]);
+                    }
+                };
+
+                const deleteStudent = (id) => {
+                    if (confirm("Adakah anda pasti untuk memadam pelajar ini?")) {
+                        setStudents(students.filter(s => s.id !== id));
+                    }
+                };
+
+                return (
+                    <div className="glass p-6 rounded-2xl overflow-x-auto">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-xl font-bold">Kemasukan Markah & TP</h2>
+                            <button onClick={addStudent} className="bg-blue-500 text-white px-4 py-2 rounded-lg shadow hover:bg-blue-600 transition">+ Tambah Pelajar</button>
+                        </div>
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-white/40 text-gray-700">
+                                <tr>
+                                    <th className="px-4 py-3 rounded-tl-lg">Bil</th>
+                                    <th className="px-4 py-3 w-64">Nama Pelajar</th>
+                                    {topics.map(t => (
+                                        <th key={t.id} className="px-4 py-3 text-center" title={t.name}>{t.code}</th>
+                                    ))}
+                                    <th className="px-4 py-3 text-center rounded-tr-lg">Tindakan</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {students.map((s, idx) => (
+                                    <tr key={s.id} className="border-b border-white/20 hover:bg-white/20 transition">
+                                        <td className="px-4 py-3">{idx + 1}</td>
+                                        <td className="px-4 py-3 font-medium">{s.name}</td>
+                                        {topics.map(t => {
+                                            const mark = s.marks[t.id] !== undefined ? s.marks[t.id] : '';
+                                            const tpInfo = getTP(mark);
+                                            return (
+                                                <td key={t.id} className="px-4 py-3 text-center">
+                                                    <div className="flex flex-col items-center gap-1">
+                                                        <input 
+                                                            type="number" 
+                                                            min="0" max="100" 
+                                                            value={mark} 
+                                                            onChange={(e) => handleMarkChange(s.id, t.id, e.target.value)}
+                                                            className="w-16 p-1 text-center bg-white/60 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                                            placeholder="-"
+                                                        />
+                                                        {mark !== '' && <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold shadow-sm ${tpInfo.color}`}>{tpInfo.label}</span>}
+                                                    </div>
+                                                </td>
+                                            );
+                                        })}
+                                        <td className="px-4 py-3 text-center">
+                                            <button onClick={() => deleteStudent(s.id)} className="text-red-500 hover:text-red-700 font-bold" title="Padam Pelajar">X</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {students.length === 0 && (
+                                    <tr><td colSpan={topics.length + 3} className="text-center py-6 text-gray-500">Tiada rekod pelajar.</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                );
+            };
+
+            const IndividualReport = () => {
+                const chartRef = useRef(null);
+                const chartInstance = useRef(null);
+                const [ulasan, setUlasan] = useState('');
+
+                const selectedStudent = studentsWithAvg.find(s => s.id === selectedStudentId);
+
+                // Auto-generate Ulasan
+                useEffect(() => {
+                    if (selectedStudent) {
+                        const tp = selectedStudent.overallTP;
+                        if (tp <= 2) setUlasan("Pelajar memerlukan bimbingan rapi dan latihan intensif untuk menguasai asas pembelajaran.");
+                        else if (tp <= 4) setUlasan("Prestasi memuaskan. Teruskan usaha untuk meningkatkan pemahaman dan kemahiran ke tahap yang lebih cemerlang.");
+                        else setUlasan("Syabas! Pelajar menunjukkan penguasaan yang sangat cemerlang. Kekalkan prestasi dan bantu rakan-rakan lain.");
+                    }
+                }, [selectedStudentId]);
+
+                useEffect(() => {
+                    if (chartRef.current && selectedStudent) {
+                        if (chartInstance.current) chartInstance.current.destroy();
+                        const ctx = chartRef.current.getContext('2d');
+                        const dataMarks = topics.map(t => selectedStudent.marks[t.id] || 0);
+                        const labels = topics.map(t => t.name);
+
+                        chartInstance.current = new Chart(ctx, {
+                            type: 'radar',
+                            data: {
+                                labels: labels,
+                                datasets: [{
+                                    label: 'Markah Topik',
+                                    data: dataMarks,
+                                    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                                    borderColor: 'rgba(59, 130, 246, 1)',
+                                    pointBackgroundColor: 'rgba(59, 130, 246, 1)',
+                                }]
+                            },
+                            options: { responsive: true, scales: { r: { min: 0, max: 100 } } }
+                        });
+                    }
+                    return () => { if (chartInstance.current) chartInstance.current.destroy(); };
+                }, [selectedStudent, topics]);
+
+                return (
+                    <div className="space-y-6">
+                        <div className="glass p-6 rounded-2xl no-print flex items-center gap-4">
+                            <label className="font-bold">Pilih Pelajar: </label>
+                            <select 
+                                className="p-2 rounded border bg-white/60 focus:outline-none flex-grow"
+                                value={selectedStudentId}
+                                onChange={(e) => setSelectedStudentId(e.target.value)}
+                            >
+                                <option value="">-- Sila Pilih Pelajar --</option>
+                                {studentsWithAvg.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                            <button onClick={() => window.print()} className="bg-indigo-600 text-white px-4 py-2 rounded shadow hover:bg-indigo-700">Cetak PDF</button>
+                        </div>
+
+                        {selectedStudent && (
+                            <div className="glass p-8 rounded-2xl print-bg-white print-border-none text-gray-900">
+                                {/* Report Header */}
+                                <div className="text-center mb-8 border-b-2 border-gray-800 pb-4">
+                                    {settings.logo && <img src={settings.logo} alt="Logo Sekolah" className="h-20 mx-auto mb-2" />}
+                                    <h1 className="text-2xl font-bold uppercase">Laporan Pentaksiran Bilik Darjah</h1>
+                                    <p className="text-lg">{settings.subject} | {settings.form}</p>
+                                </div>
+
+                                <div className="mb-6 flex justify-between items-center bg-gray-50/50 p-4 rounded-lg print-bg-white border">
+                                    <div>
+                                        <p className="text-sm text-gray-500">Nama Pelajar</p>
+                                        <p className="text-xl font-bold">{selectedStudent.name}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-sm text-gray-500">Tahap Penguasaan Keseluruhan</p>
+                                        <p className="text-2xl font-bold text-indigo-700">TP {selectedStudent.overallTP}</p>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                                    <div>
+                                        <table className="w-full text-sm border-collapse border border-gray-300">
+                                            <thead className="bg-gray-100">
+                                                <tr>
+                                                    <th className="border p-2 text-left">Kod</th>
+                                                    <th className="border p-2 text-left">Topik DSKP</th>
+                                                    <th className="border p-2 text-center">Markah</th>
+                                                    <th className="border p-2 text-center">TP</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {topics.map(t => {
+                                                    const mark = selectedStudent.marks[t.id] || 0;
+                                                    const tpInfo = getTP(mark);
+                                                    return (
+                                                        <tr key={t.id}>
+                                                            <td className="border p-2 font-medium">{t.code}</td>
+                                                            <td className="border p-2">{t.name}</td>
+                                                            <td className="border p-2 text-center">{mark}</td>
+                                                            <td className="border p-2 text-center font-bold">
+                                                                <span className={`px-2 py-1 rounded text-xs no-print ${tpInfo.color}`}>{tpInfo.label}</span>
+                                                                <span className="hidden print:inline">{tpInfo.label}</span>
+                                                            </td>
+                                                        </tr>
+                                                    )
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div className="flex justify-center items-center">
+                                        <canvas ref={chartRef} className="max-h-64"></canvas>
+                                    </div>
+                                </div>
+
+                                <div className="mb-8 print-break-inside-avoid">
+                                    <h3 className="font-bold mb-2">Ulasan Guru & Tindakan Susulan</h3>
+                                    <textarea 
+                                        className="w-full p-3 rounded-lg border bg-white/50 print-border-none focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                        rows="3"
+                                        value={ulasan}
+                                        onChange={(e) => setUlasan(e.target.value)}
+                                    ></textarea>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-8 mt-12 print-break-inside-avoid text-center">
+                                    <div>
+                                        <div className="border-b border-gray-800 w-48 mx-auto mb-2"></div>
+                                        <p className="text-sm font-semibold">Tandatangan Guru</p>
+                                    </div>
+                                    <div>
+                                        <div className="border-b border-gray-800 w-48 mx-auto mb-2"></div>
+                                        <p className="text-sm font-semibold">Tandatangan Ibu Bapa / Penjaga</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            const Settings = () => {
+                const addTopic = () => {
+                    const code = prompt("Masukkan kod topik (Cth: 6.0):");
+                    const name = prompt("Masukkan nama topik:");
+                    if (code && name) setTopics([...topics, { id: 't' + Date.now(), code, name }]);
+                };
+                
+                const deleteTopic = (id) => {
+                    if (confirm("Pastikan anda ingin buang topik ini? Data markah yang berhubung akan diabaikan.")) {
+                        setTopics(topics.filter(t => t.id !== id));
+                    }
+                };
+
+                return (
+                    <div className="glass p-6 rounded-2xl max-w-4xl mx-auto space-y-8">
+                        <div>
+                            <h2 className="text-xl font-bold mb-4 border-b border-white/30 pb-2">Maklumat Asas</h2>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Mata Pelajaran</label>
+                                    <input type="text" value={settings.subject} onChange={e => setSettings({...settings, subject: e.target.value})} className="w-full p-2 rounded bg-white/60 border border-gray-300" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Tahun / Tingkatan</label>
+                                    <input type="text" value={settings.form} onChange={e => setSettings({...settings, form: e.target.value})} className="w-full p-2 rounded bg-white/60 border border-gray-300" />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className="block text-sm font-medium mb-1">Muat Naik Logo Sekolah (Akan ditukar ke Base64)</label>
+                                    <input type="file" accept="image/*" onChange={handleLogoUpload} className="w-full p-2 rounded bg-white/60 border border-gray-300" />
+                                    {settings.logo && <img src={settings.logo} alt="Preview Logo" className="mt-2 h-16 rounded" />}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div className="flex justify-between items-center mb-4 border-b border-white/30 pb-2">
+                                <h2 className="text-xl font-bold">Pengurusan Topik DSKP</h2>
+                                <button onClick={addTopic} className="bg-green-500 text-white px-3 py-1 rounded text-sm">+ Tambah Topik</button>
+                            </div>
+                            <ul className="space-y-2">
+                                {topics.map(t => (
+                                    <li key={t.id} className="flex justify-between items-center bg-white/50 p-2 rounded">
+                                        <span><strong>{t.code}</strong> - {t.name}</span>
+                                        <button onClick={() => deleteTopic(t.id)} className="text-red-500 font-bold px-2">X</button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+
+                        <div>
+                            <h2 className="text-xl font-bold mb-4 border-b border-white/30 pb-2">Pangkalan Data (Sandaran / Pemulihan)</h2>
+                            <div className="flex gap-4">
+                                <button onClick={handleBackup} className="bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-700">⬇️ Muat Turun Data (Backup)</button>
+                                <label className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 cursor-pointer">
+                                    ⬆️ Muat Naik Data (Restore)
+                                    <input type="file" accept=".json" onChange={handleRestore} className="hidden" />
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="max-w-7xl mx-auto p-4 md:p-6 pb-20">
+                    {/* Header */}
+                    <header className="glass-header rounded-2xl p-4 mb-6 flex flex-col md:flex-row justify-between items-center shadow-sm no-print">
+                        <div className="flex items-center gap-4 mb-4 md:mb-0">
+                            {settings.logo ? <img src={settings.logo} alt="Logo" className="h-12 w-12 object-contain rounded-full" /> : <div className="h-12 w-12 bg-blue-200 rounded-full flex items-center justify-center font-bold text-blue-600">Logo</div>}
+                            <div>
+                                <h1 className="text-xl font-bold text-gray-800">Sistem Rekod Transit PBD</h1>
+                                <p className="text-sm text-gray-600">{settings.subject} | {settings.form}</p>
+                            </div>
+                        </div>
+                        <nav className="flex gap-2 bg-white/40 p-1 rounded-xl">
+                            {['dashboard', 'record', 'report', 'settings'].map(tab => (
+                                <button 
+                                    key={tab}
+                                    onClick={() => setActiveTab(tab)}
+                                    className={`px-4 py-2 rounded-lg text-sm font-semibold capitalize transition-all ${activeTab === tab ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600 hover:bg-white/50'}`}
+                                >
+                                    {tab === 'record' ? 'Transit Rekod' : tab === 'report' ? 'Laporan' : tab === 'settings' ? 'Tetapan' : tab}
+                                </button>
+                            ))}
+                        </nav>
+                    </header>
+
+                    {/* Main Content Area */}
+                    <main>
+                        {activeTab === 'dashboard' && <Dashboard />}
+                        {activeTab === 'record' && <TransitRecord />}
+                        {activeTab === 'report' && <IndividualReport />}
+                        {activeTab === 'settings' && <Settings />}
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
